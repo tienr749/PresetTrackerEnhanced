@@ -502,7 +502,7 @@ jQuery(async () => {
 
                 if (presetStorage && typeof presetStorage === 'object') {
                     // 저장소에서 키로 값(프리셋 이름) 조회, 없으면 '기록 없음' 메시지
-                    presetName = presetStorage[lookupKey] || '(프리셋 정보 없음 - 기록 없음)';
+                    presetName = presetStorage[lookupKey] || '(프리셋 정보 없음)';
                 } else {
                     // 메타데이터 저장소 자체가 없거나 객체가 아닐 경우
                     presetName = '(프리셋 정보 없음 - 메타데이터 저장소 누락)';
