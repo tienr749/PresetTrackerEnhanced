@@ -1,0 +1,12 @@
+{
+    "display_name": "PresetTrackerEnhanced",
+    "loading_order": 5,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "tienr749",
+    "version": "1.0.0",
+    "homePage": "https://github.com/tienr749/SillyTavern-PresetTrackerEnhanced",
+    "auto_update": false
+}
