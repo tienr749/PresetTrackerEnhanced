@@ -2,34 +2,30 @@
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
             <div class="flex-container alignitemscenter margin0">
-                <b data-i18n="ext_obj_title">PresetTrackerEnhanced</b>
+                <b data-i18n="ext_obj_title">PresetTrackerEnhanced (Beta2)</b> <!-- 베타 명시 추가 -->
             </div>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
-		
             <div id="PresetTrackerExtensionDrawerContents">
-				<div>
-					<!-- <h4>Preset Tracker Enhanced</h4>-->
-					<p>
-						이 확장 기능은 AI 메시지 생성 시 사용된 프리셋 정보를 자동으로 추적하고 저장합니다.
-					</p>
-					<p>
-						채팅에서 AI 캐릭터 이름을 클릭하면 해당 메시지(또는 스와이프) 생성 시 사용된 모델과 프리셋 정보를 확인할 수 있습니다.<br><br>
-						(beta 버전에서는 시간정보+model정보를 활용해 프리셋을 저장합니다. 동일 시간에 다수의 메세지 응답을 받은 경우 기록이 부정확할 수 있습니다.)
-					</p>
-					<p>
-					현재 버전에서는 불필요 데이터 정리를 위해 /cleanpresetdata 슬래시 커맨드를 사용할 수 있습니다.
-					</p>
-					<!-- 
-					<p>
-						<em>향후 이곳에 추가 설정 옵션이 제공될 수 있습니다.</em>
-						<br>
-						<em>(현재 버전에서는 불필요 데이터 정리를 위해 /cleanpresetdata 슬래시 커맨드를 사용할 수 있습니다.)</em>
-					</p>
-					필요하다면 나중에 설정 UI 요소 추가 -->
-				</div>
+                <p>
+                    AI 메시지/스와이프 생성 시 사용된 프롬프트 정보(프리셋, 템플릿 등)를 자동으로 기록합니다.
+                </p>
+                <p>
+                    채팅에서 캐릭터 이름을 클릭하면, 해당 응답 생성 시 사용된 모델명과 저장된 프롬프트 정보가 Toastr 팝업 알림으로 표시됩니다.
+                </p>
+                <p>
+                    <b>주의사항:</b><br>
+                    • 짧은 시간(1~2분) 내 설정 변경 및 응답 생성 시 기록이 부정확할 수 있습니다.<br>
+                    • 'Continue(계속 생성하기)' 기능 사용 시 기록된 정보를 잃어버릴 수 있습니다.
+                </p>
+                <p>
+                    <b>슬래시 커맨드:</b><br>
+                    • <code>/pteCleanOrphanData</code>: 삭제된 메시지의 불필요 데이터 정리 (필요시 수동 실행).<br>
+                    • <code>/pteMigratePresetData</code>: Beta1 버전 데이터 마이그레이션 (Beta2 이후에 설치한 사용자에게는 불필요).
+                </p>
             </div>
         </div>
     </div>
 </div>
+

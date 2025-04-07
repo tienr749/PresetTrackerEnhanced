@@ -8,84 +8,238 @@ import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 const EXTENSION_NAME = 'PresetTrackerEnhanced';
 
 // 채팅 메타데이터에 프리셋 정보를 저장할 때 사용할 키
-// 형식: { "정규화된send_date_model_정규화된model": "프리셋이름" }
+// 형식: { "정규화된send_date_model_정규화된model": Object }
 const METADATA_KEY = 'presetsBySwipeKey';
 
 // 불필요 데이터 정리 작업 진행 상태를 추적하는 플래그
 let isCleaningInProgress = false;
-// 가장 최근에 수집된 프리셋 정보를 임시 저장하는 변수 (키와 값)
-let latestPresetInfo = { key: null, value: null };
+// 가장 최근에 수집된 프리셋 정보를 임시 저장하는 변수 (키와 값 객체)
+let latestPresetInfo = { key: null, value: null }; // value는 항상 객체 또는 null
 
-// 확장 시작 시 초기 메타데이터 상태 로깅 (선택적 디버깅)
-// console.log(`[${EXTENSION_NAME}] 확장 시작시 DEBUG Current context.chat_metadata content:`, JSON.stringify(getContext().chat_metadata, null, 2));
-// console.log(`[${EXTENSION_NAME}] 확장 시작시.글로벌실리직접참조.메타데이터:`, JSON.stringify(globalThis.SillyTavern.getContext().chatMetadata, null, 2));
+// --- Helper 함수: 현재 UI에서 선택된 컨텍스트 템플릿 이름 가져오기 ---
+function _getSelectedContextTemplateName() {
+    const DEBUG_PREFIX = `[${EXTENSION_NAME} - ContextTemplate Helper]`;
+    let selectedName = null; // 기본값을 null로 변경 (명시적 실패 표현)
+    try {
+        const $selectElement = $('#context_presets');
+        if ($selectElement.length === 1) {
+            const $selectedOption = $selectElement.find('option:selected');
+            if ($selectedOption.length === 1) {
+                selectedName = $selectedOption.text();
+                // 기본적인 유효성 검사 (빈 값 또는 플레이스홀더 제외)
+                if (!selectedName || selectedName.startsWith('---') || selectedName.startsWith('(')) {
+                    selectedName = null; // 유효하지 않으면 null 처리
+                }
+            }
+        } else {
+            console.error(`${DEBUG_PREFIX} Error: Found ${$selectElement.length} elements with ID #context_presets.`);
+        }
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX} Error extracting context template name:`, error);
+        selectedName = null; // 오류 시 null
+    }
+    // 최종 반환 전 null이면 실패 로그 (선택적)
+    // if (selectedName === null) console.log(`${DEBUG_PREFIX} Could not get a valid context template name.`);
+    return selectedName;
+}
+
+// --- Helper 함수: 현재 UI에서 선택된 지시 템플릿 이름 가져오기 ---
+function _getSelectedInstructTemplateName() {
+    const DEBUG_PREFIX = `[${EXTENSION_NAME} - InstructTemplate Helper]`;
+    let selectedName = null;
+    try {
+        const $selectElement = $('#instruct_presets');
+        if ($selectElement.length === 1) {
+            const $selectedOption = $selectElement.find('option:selected');
+            if ($selectedOption.length === 1) {
+                selectedName = $selectedOption.text();
+                if (!selectedName || selectedName.startsWith('---') || selectedName.startsWith('(')) {
+                    selectedName = null;
+                }
+            }
+        } else {
+            console.error(`${DEBUG_PREFIX} Error: Found ${$selectElement.length} elements with ID #instruct_presets.`);
+        }
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX} Error extracting instruct template name:`, error);
+        selectedName = null;
+    }
+    // if (selectedName === null) console.log(`${DEBUG_PREFIX} Could not get a valid instruct template name.`);
+    return selectedName;
+}
+
+// --- Helper 함수: 현재 UI에서 선택된 시스템 프롬프트 이름 가져오기 ---
+function _getSelectedSystemPromptName() {
+    const DEBUG_PREFIX = `[${EXTENSION_NAME} - SystemPrompt Helper]`;
+    let selectedName = null;
+    try {
+        const $selectElement = $('#sysprompt_select');
+        if ($selectElement.length === 1) {
+            const $selectedOption = $selectElement.find('option:selected');
+            if ($selectedOption.length === 1) {
+                selectedName = $selectedOption.text();
+                // 시스템 프롬프트는 "None"이 유효한 값일 수 있으므로, 조금 다른 유효성 검사
+                if (selectedName === null || selectedName === undefined || selectedName.startsWith('(')) {
+                   selectedName = null; // 명백히 유효하지 않은 경우만 null
+                }
+                // "None"은 유효하므로 그대로 둠.
+            }
+        } else {
+             console.error(`${DEBUG_PREFIX} Error: Found ${$selectElement.length} elements with ID #sysprompt_select.`);
+        }
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX} Error extracting system prompt name:`, error);
+        selectedName = null;
+    }
+    // if (selectedName === null) console.log(`${DEBUG_PREFIX} Could not get a valid system prompt name.`);
+    return selectedName;
+}
+
 
 // --- Helper 함수: 현재 UI에서 선택된 프리셋 이름 가져오기 ---
 function _getCurrentPresetNameFromUI() {
     const DEBUG_PREFIX = `[${EXTENSION_NAME} - Preset Helper]`;
-    let currentPresetName = '(프리셋 정보 없음 - 초기값)'; // 기본값
+    let currentPresetName = null; // 기본값을 null로 변경
     try {
-        // 현재 화면에 보이는 프리셋 블록 찾기
         const visiblePresetDiv = $('#respective-presets-block > div:not([style*="display: none"])');
         if (visiblePresetDiv.length === 1) {
-            // 프리셋 선택 select 요소 찾기
             const presetSelect = visiblePresetDiv.find('select.text_pole');
             if (presetSelect.length === 1) {
-                // 선택된 option 요소 찾기
                 const selectedOption = presetSelect.find('option:selected');
                 if (selectedOption.length === 1) {
-                    currentPresetName = selectedOption.text(); // 선택된 프리셋 이름 가져오기
-                } else {
-                    currentPresetName = '(프리셋 정보 없음 - 옵션 미선택)';
+                    currentPresetName = selectedOption.text();
+                    if (!currentPresetName || currentPresetName.startsWith('---') || currentPresetName.startsWith('(')) {
+                        currentPresetName = null;
+                    }
                 }
-            } else if (presetSelect.length > 1) {
-                 // 오류: Select 요소가 여러 개 발견됨
-                 currentPresetName = '(프리셋 정보 오류 - Select 여러 개)';
-                 console.error(`${DEBUG_PREFIX} Error: Found multiple select.text_pole elements in the visible preset div.`);
             } else {
-                // 오류: Select 요소를 찾지 못함
-                currentPresetName = '(프리셋 정보 없음 - Select 못찾음)';
+                console.error(`${DEBUG_PREFIX} Error: Found ${presetSelect.length} select.text_pole elements.`);
             }
-        } else if (visiblePresetDiv.length > 1) {
-             // 오류: 보이는 프리셋 Div가 여러 개 발견됨
-             currentPresetName = '(프리셋 정보 오류 - 보이는 Div 여러 개)';
-             console.error(`${DEBUG_PREFIX} Error: Found multiple visible preset divs in #respective-presets-block.`);
         } else {
-            // 정보 없음: 보이는 프리셋 Div 없음
-            currentPresetName = '(프리셋 정보 없음 - 보이는 Div 없음)';
+             console.error(`${DEBUG_PREFIX} Error: Found ${visiblePresetDiv.length} visible preset divs.`);
         }
     } catch (error) {
-        // 오류: 프리셋 이름 추출 중 예외 발생
-        currentPresetName = '(프리셋 정보 없음 - 추출 오류)';
-        console.error(`${DEBUG_PREFIX} Error extracting preset name from UI:`, error);
+        console.error(`${DEBUG_PREFIX} Error extracting preset name:`, error);
+        currentPresetName = null;
     }
+    // if (currentPresetName === null) console.log(`${DEBUG_PREFIX} Could not get a valid preset name.`);
     return currentPresetName;
 }
-// --- Helper 함수 끝 ---
+
+// --- Helper 함수: 현재 선택된 API가 Text Completion인지 확인 ---
+function _isTextCompletionSelected() {
+    const DEBUG_PREFIX = `[${EXTENSION_NAME} - ApiCheck Helper]`;
+    try {
+        const $apiSelect = $('#main_api');
+        if ($apiSelect.length === 1) {
+            const selectedApiValue = $apiSelect.val();
+            // 'textgenerationwebui' 값이 Text Completion API를 나타냅니다.
+            return selectedApiValue === 'textgenerationwebui';
+        } else {
+            console.warn(`${DEBUG_PREFIX} Could not find API select element #main_api.`);
+            return false;
+        }
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX} Error checking selected API:`, error);
+        return false;
+    }
+}
+
+
+// 디버그용 Helper 함수: 현재 UI에서 선택된 프롬프트 관련 데이터 취합 및 포맷
+function _view_promptDataFromUI() {
+    const DEBUG_PREFIX_VIEW = `[${EXTENSION_NAME} - ViewPromptData]`;
+    try {
+        const isTextComp = _isTextCompletionSelected();
+        const generationPreset = _getCurrentPresetNameFromUI() || '(정보 없음)'; // null이면 대체 텍스트
+
+        let outputString = `  - API Type: ${isTextComp ? 'Text Completion' : 'Other'}\n`;
+        outputString += `  - Generation Preset: ${generationPreset}\n`;
+
+        if (isTextComp) {
+            const contextTemplate = _getSelectedContextTemplateName() || '(정보 없음)';
+            const instructTemplate = _getSelectedInstructTemplateName() || '(정보 없음)';
+            const systemPrompt = _getSelectedSystemPromptName(); // "None" 가능
+            outputString += `  - Context Template: ${contextTemplate}\n`;
+            outputString += `  - Instruct Template: ${instructTemplate}\n`;
+            outputString += `  - System Prompt: ${systemPrompt !== null ? systemPrompt : '(정보 없음)'}`; // null일 때만 대체
+        }
+
+        return outputString;
+
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX_VIEW} Error gathering prompt data from UI:`, error);
+        return "  Error retrieving prompt data. Check console for details.";
+    }
+}
 
 // --- Helper 함수: 메시지/스와이프의 send_date와 model 이름을 조합하여 정규화된 키 생성 ---
 function _createSwipeKey(sendDate, modelName) {
-    // const DEBUG_PREFIX_KEY = `[${EXTENSION_NAME} - KeyGen]`;
-
-    // send_date는 필수 값이므로 없으면 키 생성 불가 (null 반환)
     if (!sendDate) {
-        // console.warn(`${DEBUG_PREFIX_KEY} sendDate is missing, cannot generate key.`);
+        return null;
+    }
+    const normalizedSendDate = String(sendDate).replace(/\s+/g, '').toLowerCase();
+    const normalizedModelName = (modelName || 'unknown').toLowerCase();
+    const key = `${normalizedSendDate}_model_${normalizedModelName}`;
+    return key;
+}
+
+// --- Helper 함수: 데이터 소스와 UI 상태 기반으로 저장할 프리셋 정보 객체 수집 및 형식화 ---
+function _collectAndFormatPresetData(dataSource) {
+    const DEBUG_PREFIX_COLLECT = `[${EXTENSION_NAME} - CollectData]`;
+    if (!dataSource) {
+        console.warn(`${DEBUG_PREFIX_COLLECT} dataSource is missing.`);
         return null;
     }
 
-    // 1. send_date 정규화: 문자열로 변환 후 공백 제거, 소문자화
-    const normalizedSendDate = String(sendDate).replace(/\s+/g, '').toLowerCase();
+    const valueObject = {};
+    const isTextComp = _isTextCompletionSelected();
 
-    // 2. model 이름 정규화: 소문자화, 없으면 'unknown'으로 대체
-    const normalizedModelName = (modelName || 'unknown').toLowerCase();
+    // 1. Generation Preset (항상 시도)
+    const genPresetName = _getCurrentPresetNameFromUI();
+    if (genPresetName) { // null이 아닐 때만 추가
+        valueObject.genPreset = genPresetName;
+    } else {
+        // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Generation Preset name.`);
+    }
 
-    // 3. 정규화된 값들을 조합하여 최종 키 생성
-    const key = `${normalizedSendDate}_model_${normalizedModelName}`;
-    // console.log(`${DEBUG_PREFIX_KEY} Generated Key: "${key}" from sendDate: "${sendDate}", model: "${modelName}"`);
-    return key;
+    // 2. Text Completion 상세 정보 (Text Completion API 일 때만 시도)
+    if (isTextComp) {
+        const ctxTplName = _getSelectedContextTemplateName();
+        if (ctxTplName) {
+            valueObject.ctxTpl = ctxTplName;
+        } else {
+            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Context Template name.`);
+        }
+
+        const insTplName = _getSelectedInstructTemplateName();
+        if (insTplName) {
+            valueObject.insTpl = insTplName;
+        } else {
+            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Instruct Template name.`);
+        }
+
+        const sysPptName = _getSelectedSystemPromptName();
+        // System Prompt는 "None"도 유효하므로 null이 아닐 때만 추가 (빈 문자열은 보통 없음)
+        if (sysPptName !== null) {
+             valueObject.sysPpt = sysPptName;
+        } else {
+            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid System Prompt name.`);
+        }
+    }
+
+    // 3. 최종 객체 유효성 확인 (하나 이상의 유효한 속성이 있는지)
+    if (Object.keys(valueObject).length > 0) {
+        // console.log(`${DEBUG_PREFIX_COLLECT} Collected data:`, valueObject);
+        return valueObject;
+    } else {
+        console.warn(`${DEBUG_PREFIX_COLLECT} No valid preset/template information could be collected.`);
+        return null; // 유효한 정보가 하나도 없으면 null 반환
+    }
 }
-// --- Helper 함수 끝 ---
 
+
+// --- Helper 함수 끝 ---
 
 // 상태 리셋 함수: 채팅 변경 시 호출되어 설정 재로드
 function resetState() {
@@ -96,57 +250,47 @@ function resetState() {
 function saveState() {
     const DEBUG_PREFIX_SAVE = `[${EXTENSION_NAME} - SaveState]`;
     const context = globalThis.SillyTavern.getContext();
-    // 컨텍스트 또는 메타데이터 접근 불가 시 오류 처리 및 중단
     if (!context || !context.chatMetadata) {
         console.error(`${DEBUG_PREFIX_SAVE} Critical Error: Context or chatMetadata is not available! Aborting saveState.`);
         return;
     }
     const chatMetadata = context.chatMetadata;
-    // 메타데이터 내 프리셋 저장 공간 참조 (없으면 생성 예정)
     let targetMetadata = chatMetadata[METADATA_KEY];
 
-    // 메타데이터 저장소가 없거나 객체가 아니면 빈 객체로 초기화
     if (typeof targetMetadata !== 'object' || targetMetadata === null) {
-        // console.log(`${DEBUG_PREFIX_SAVE} [${METADATA_KEY}] 키를 찾을 수 없거나 객체가 아닙니다. 빈 객체 {}로 초기화합니다.`);
         targetMetadata = {};
         chatMetadata[METADATA_KEY] = targetMetadata;
     }
 
-    // 임시 변수에서 새로 추가할 키와 값 가져오기
-    const newKey = latestPresetInfo.key;     // 예: "2024-01-01t12:00:00.000z_model_example-model"
-    const newValue = latestPresetInfo.value; // 예: "My Awesome Preset"
+    const newKey = latestPresetInfo.key;
+    const newValueObject = latestPresetInfo.value; // 이제 항상 객체 또는 null
 
-    // 키 추가 조건: 키가 유효하고(문자열이며 비어있지 않음), 메타데이터에 아직 존재하지 않음
-    if (newKey && typeof newKey === 'string' && newKey.trim() !== '') {
-        // hasOwnProperty로 해당 키가 객체에 직접 존재하는지 확인 (프로토타입 체인 X)
+    // 키와 값 객체가 모두 유효할 때만 저장 시도
+    if (newKey && typeof newKey === 'string' && newKey.trim() !== '' && newValueObject && typeof newValueObject === 'object') {
         if (!targetMetadata.hasOwnProperty(newKey)) {
-            // 키가 없을 때만 새로운 키-값 쌍 추가 (덮어쓰기 방지)
-            targetMetadata[newKey] = newValue;
-            // console.log(`${DEBUG_PREFIX_SAVE} [${METADATA_KEY}] 객체에 새로운 프리셋 정보 추가됨: { "${newKey}": "${newValue}" }`);
+            targetMetadata[newKey] = newValueObject; // 새 객체 저장
+            // console.log(`${DEBUG_PREFIX_SAVE} Added new preset info object for key "${newKey}":`, newValueObject);
         } else {
-            // 키가 이미 존재하면 추가하지 않음
-            // console.log(`${DEBUG_PREFIX_SAVE} [${METADATA_KEY}] 객체에 키 "${newKey}"가 이미 존재하므로 추가하지 않습니다.`);
+            // console.log(`${DEBUG_PREFIX_SAVE} Key "${newKey}" already exists. Skipping addition.`);
         }
     } else {
-        // 추가할 키가 유효하지 않은 경우 (예: _createSwipeKey에서 null 반환)
-        // console.log(`${DEBUG_PREFIX_SAVE} 추가할 latestPresetInfo.key가 유효하지 않습니다 (값: ${newKey}). 추가 작업을 건너<0xEB><0x9B><0x84>니다.`);
+        // console.log(`${DEBUG_PREFIX_SAVE} Invalid key ("${newKey}") or value object (${JSON.stringify(newValueObject)}). Skipping save.`);
     }
 
-    // 메타데이터 저장 예약 (변경된 경우 디바운스되어 저장됨)
-    saveMetadataDebounced();
+    saveMetadataDebounced(); // 변경 여부와 관계없이 호출 (Debounce가 처리)
 }
 
 // 설정 로드 함수: 확장 로드 시 또는 채팅 변경 시 호출
 function loadSettings() {
     const DEBUG_PREFIX_LOAD = `[${EXTENSION_NAME} - LoadSettings]`;
-    const context = getContext();
+    const context = getContext(); // Use local getContext if available
 
-    // 컨텍스트 접근 불가 시 오류 처리 및 중단
     if (!context) {
         console.error(`${DEBUG_PREFIX_LOAD} Critical Error: Context is not available! Aborting loadSettings.`);
         return;
     }
-    // 전역 컨텍스트 및 메타데이터 접근 (없으면 초기화 시도)
+
+    // Ensure global chatMetadata exists
     const globalContext = globalThis.SillyTavern.getContext();
     if (!globalContext.chatMetadata) {
          console.warn(`${DEBUG_PREFIX_LOAD} globalContext.chatMetadata is initially undefined/null. Initializing as {}.`);
@@ -154,26 +298,20 @@ function loadSettings() {
     }
     const currentChatMetadata = globalContext.chatMetadata;
 
-    // 임시 프리셋 정보 변수 초기화
-    latestPresetInfo = { key: null, value: null };
+    latestPresetInfo = { key: null, value: null }; // Reset temporary storage
 
-    // 메타데이터 저장소(METADATA_KEY) 확인 및 초기화
     if (typeof METADATA_KEY === 'undefined') {
         console.error(`${DEBUG_PREFIX_LOAD} Critical Error: METADATA_KEY is not defined! Aborting metadata load.`);
         return;
     }
 
-    // 메타데이터 내 프리셋 저장 공간이 없거나 객체가 아니면 빈 객체로 초기화
+    // Ensure metadata storage for this extension exists and is an object
     if (!(METADATA_KEY in currentChatMetadata) || typeof currentChatMetadata[METADATA_KEY] !== 'object' || currentChatMetadata[METADATA_KEY] === null) {
         currentChatMetadata[METADATA_KEY] = {};
         console.log(`${DEBUG_PREFIX_LOAD} Initialized metadata storage at key: ${METADATA_KEY}`);
-    } else {
-        // 기존 메타데이터 발견 시 로그 (선택적)
-        // console.log(`${DEBUG_PREFIX_LOAD} Found existing metadata storage at key: ${METADATA_KEY}`);
     }
 
-    // 설정 로드 완료 로그 (현재 메타데이터 상태 포함 - 선택적 디버깅)
-    console.log(`${DEBUG_PREFIX_LOAD} Settings load complete for ${EXTENSION_NAME}. Current metadata[${METADATA_KEY}]:`, JSON.stringify(currentChatMetadata[METADATA_KEY], null, 2));
+	console.log(`${DEBUG_PREFIX_LOAD} Settings load complete for ${EXTENSION_NAME}.`);
 }
 
 
@@ -183,21 +321,16 @@ function loadSettings() {
  * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
  */
 async function _cleanupOrphanPresetData() {
-    const DEBUG_PREFIX_CLEANUP = `[${EXTENSION_NAME} - Cleanup]`; // 로그용 접두사
+    const DEBUG_PREFIX_CLEANUP = `[${EXTENSION_NAME} - Cleanup]`;
 
-    // 1. 중복 실행 방지 확인
     if (isCleaningInProgress) {
         console.warn(`${DEBUG_PREFIX_CLEANUP} Cleanup already in progress.`);
         toastr.warning('이미 정리 작업이 진행 중입니다.');
-        return '정리 작업이 이미 진행 중입니다.'; // 슬래시 커맨드 결과 반환
+        return '정리 작업이 이미 진행 중입니다.';
     }
 
     try {
-        // 2. 정리 작업 시작 플래그 설정
         isCleaningInProgress = true;
-        // console.log(`${DEBUG_PREFIX_CLEANUP} Starting orphan data cleanup...`);
-
-        // 3. 필수 데이터 가져오기 및 유효성 검사
         const context = globalThis.SillyTavern.getContext();
         if (!context || !context.chat || !context.chatMetadata) {
             console.error(`${DEBUG_PREFIX_CLEANUP} Critical error: Context, chat, or chatMetadata not available.`);
@@ -207,82 +340,112 @@ async function _cleanupOrphanPresetData() {
 
         const presetStorage = context.chatMetadata[METADATA_KEY];
 
-        // 저장된 데이터가 없거나 비어있는 경우
         if (!presetStorage || typeof presetStorage !== 'object' || Object.keys(presetStorage).length === 0) {
-            // console.log(`${DEBUG_PREFIX_CLEANUP} No preset data found in metadata or metadata is empty. Nothing to clean.`);
             toastr.info('정리할 프리셋 데이터가 없습니다.');
             return '정리할 프리셋 데이터가 없습니다.';
         }
 
-        // 4. 현재 채팅에 존재하는 유효한 키 목록 생성 (Set 사용으로 중복 자동 제거 및 빠른 조회)
         const validKeys = new Set();
-        // console.log(`${DEBUG_PREFIX_CLEANUP} Scanning chat messages to identify valid keys...`);
-
         for (const message of context.chat) {
-            // AI 메시지가 아니면 건너뜀
-            if (message.is_user || message.is_system) {
-                continue;
-            }
+            if (message.is_user || message.is_system) continue;
 
-            // 기본 메시지 정보로 키 생성 시도
             let baseKey = _createSwipeKey(message.send_date, message.extra?.model);
-            if (baseKey) {
-                validKeys.add(baseKey);
-            }
+            if (baseKey) validKeys.add(baseKey);
 
-            // 스와이프 정보가 있으면 각 스와이프로 키 생성 시도
             if (Array.isArray(message.swipe_info)) {
                 for (const swipe of message.swipe_info) {
-                    if (swipe) { // 스와이프 데이터 유효성 확인
+                    if (swipe) {
                         let swipeKey = _createSwipeKey(swipe.send_date, swipe.extra?.model);
-                        if (swipeKey) {
-                            validKeys.add(swipeKey);
-                        }
+                        if (swipeKey) validKeys.add(swipeKey);
                     }
                 }
             }
         }
-        // console.log(`${DEBUG_PREFIX_CLEANUP} Identified ${validKeys.size} valid keys in the current chat.`);
 
-        // 5. 메타데이터 순회하며 유효하지 않은(불필요) 키 삭제
         let deletedCount = 0;
         const metadataKeys = Object.keys(presetStorage);
-        // console.log(`${DEBUG_PREFIX_CLEANUP} Checking ${metadataKeys.length} stored keys against valid keys...`);
-
         for (const metadataKey of metadataKeys) {
-            // 메타데이터 키가 유효 키 Set에 없으면 불필요 데이터
             if (!validKeys.has(metadataKey)) {
-                // console.log(`${DEBUG_PREFIX_CLEANUP} Deleting orphan key: ${metadataKey}`);
-                delete presetStorage[metadataKey]; // 객체에서 해당 키 삭제
+                // console.log(`${DEBUG_PREFIX_CLEANUP} Deleting orphan key: ${metadataKey} (Value type: ${typeof presetStorage[metadataKey]})`);
+                delete presetStorage[metadataKey];
                 deletedCount++;
             }
         }
 
-        // 6. 변경 사항 저장 및 사용자 피드백
         let feedbackMessage;
         if (deletedCount > 0) {
-            // 삭제된 항목이 있을 때만 저장하고 성공 메시지 표시
-            // console.log(`${DEBUG_PREFIX_CLEANUP} Deleted ${deletedCount} orphan entries. Saving metadata...`);
             saveMetadataDebounced();
             feedbackMessage = `${deletedCount}개의 사용하지 않는 프리셋 정보가 정리되었습니다.`;
             toastr.success(feedbackMessage);
         } else {
-            // 삭제된 항목이 없을 때 정보 메시지 표시
-            // console.log(`${DEBUG_PREFIX_CLEANUP} No orphan entries found to delete.`);
             feedbackMessage = '사용하지 않는 프리셋 정보가 없어 정리할 내용이 없습니다.';
+            toastr.info(feedbackMessage);
+        }
+        return feedbackMessage;
+
+    } catch (error) {
+        console.error(`${DEBUG_PREFIX_CLEANUP} Error during cleanup process:`, error);
+        toastr.error('데이터 정리 중 오류가 발생했습니다. 콘솔 로그를 확인하세요.');
+        return '데이터 정리 중 오류 발생.';
+    } finally {
+        isCleaningInProgress = false;
+    }
+}
+
+/**
+ * Preset Tracker Enhanced: 레거시 문자열 데이터를 새 객체 형식으로 마이그레이션
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+async function _migrateLegacyPresetData() {
+    const DEBUG_PREFIX_MIGRATE = `[${EXTENSION_NAME} - Migrate]`;
+    try {
+        console.log(`${DEBUG_PREFIX_MIGRATE} Starting legacy data migration...`);
+        const context = globalThis.SillyTavern.getContext();
+        if (!context || !context.chatMetadata) {
+            console.error(`${DEBUG_PREFIX_MIGRATE} Critical error: Context or chatMetadata not available.`);
+            toastr.error('마이그레이션 실패: 필수 데이터를 로드할 수 없습니다.');
+            return '마이그레이션 실패: 필수 데이터 로드 불가.';
+        }
+
+        const presetStorage = context.chatMetadata[METADATA_KEY];
+
+        if (!presetStorage || typeof presetStorage !== 'object' || Object.keys(presetStorage).length === 0) {
+            console.log(`${DEBUG_PREFIX_MIGRATE} No preset data found to migrate.`);
+            toastr.info('마이그레이션할 레거시 데이터가 없습니다.');
+            return '마이그레이션할 레거시 데이터가 없습니다.';
+        }
+
+        let convertedCount = 0;
+        const keysToMigrate = Object.keys(presetStorage);
+        // console.log(`${DEBUG_PREFIX_MIGRATE} Checking ${keysToMigrate.length} entries...`);
+
+        for (const key of keysToMigrate) {
+            const value = presetStorage[key];
+            // 값이 문자열인 경우만 마이그레이션 대상
+            if (typeof value === 'string') {
+                // console.log(`${DEBUG_PREFIX_MIGRATE} Migrating key: ${key}, value: "${value}"`);
+                presetStorage[key] = { genPreset: value }; // 새 객체 형식으로 변환
+                convertedCount++;
+            }
+        }
+
+        let feedbackMessage;
+        if (convertedCount > 0) {
+            console.log(`${DEBUG_PREFIX_MIGRATE} Migrated ${convertedCount} legacy entries. Saving metadata...`);
+            saveMetadataDebounced(); // 변경 사항 저장
+            feedbackMessage = `${convertedCount}개의 레거시 프리셋 데이터가 새로운 형식으로 변환되었습니다.`;
+            toastr.success(feedbackMessage);
+        } else {
+            console.log(`${DEBUG_PREFIX_MIGRATE} No legacy string data found to migrate.`);
+            feedbackMessage = '변환할 레거시 데이터가 없습니다.';
             toastr.info(feedbackMessage);
         }
         return feedbackMessage; // 슬래시 커맨드 결과 반환
 
     } catch (error) {
-        // 7. 오류 처리
-        console.error(`${DEBUG_PREFIX_CLEANUP} Error during cleanup process:`, error);
-        toastr.error('데이터 정리 중 오류가 발생했습니다. 콘솔 로그를 확인하세요.');
-        return '데이터 정리 중 오류 발생.'; // 슬래시 커맨드 결과 반환
-    } finally {
-        // 8. 작업 완료 후 플래그 리셋 (성공/실패 무관하게 항상 실행)
-        isCleaningInProgress = false;
-        // console.log(`${DEBUG_PREFIX_CLEANUP} Cleanup process finished.`);
+        console.error(`${DEBUG_PREFIX_MIGRATE} Error during migration process:`, error);
+        toastr.error('데이터 마이그레이션 중 오류가 발생했습니다. 콘솔 로그를 확인하세요.');
+        return '데이터 마이그레이션 중 오류 발생.'; // 슬래시 커맨드 결과 반환
     }
 }
 
@@ -290,54 +453,46 @@ async function _cleanupOrphanPresetData() {
 // jQuery Ready 함수: 문서 로딩 완료 후 실행
 jQuery(async () => {
     console.log(`[${EXTENSION_NAME}] Extension Loading...`);
-
-    // 초기 설정 로드
     loadSettings();
+
+    // 초기 UI 상태 확인 (디버그용)
+    // console.log(`[${EXTENSION_NAME}] Initial Prompt Settings Check:\n${_view_promptDataFromUI()}`);
 
     // --- 설정 페이지 HTML 로드 및 추가 ---
     try {
-        // 'templates/settings.html' 파일 비동기 로드
         const settingsHtml = await renderExtensionTemplateAsync(`third-party/${EXTENSION_NAME}`, 'settings');
-        // SillyTavern의 표준 확장 설정 영역 컨테이너 찾기
         const container = $('#extensions_settings');
-        // 컨테이너가 존재하면 로드한 HTML 추가
         if (container.length > 0) {
             container.append(settingsHtml);
-            console.log(`[${EXTENSION_NAME}] Settings HTML loaded into #extensions_settings.`);
+            // console.log(`[${EXTENSION_NAME}] Settings HTML loaded into #extensions_settings.`);
         } else {
-            // 컨테이너 못 찾으면 경고 로그
-            console.warn(`[${EXTENSION_NAME}] Could not find container #extensions_settings to load settings HTML.`);
+            console.warn(`[${EXTENSION_NAME}] Could not find container #extensions_settings.`);
         }
     } catch (error) {
-        // HTML 로드/추가 중 오류 발생 시 에러 로그
         console.error(`[${EXTENSION_NAME}] Error loading or appending settings HTML:`, error);
     }
-    // --- 설정 페이지 로드 끝 ---
 
     // --- SillyTavern 이벤트 리스너 등록 ---
 
-    // 채팅 변경 시: 상태 리셋 (설정 재로드)
     eventSource.on(event_types.CHAT_CHANGED, () => {
         console.log(`[${EXTENSION_NAME}] Chat changed, resetting state.`);
         resetState();
     });
 
-    // 새 메시지 수신 시: 프리셋 정보 수집 및 저장 시도
+    // 새 메시지 수신 시: 프리셋 정보 수집 및 저장 시도 (수정됨)
     eventSource.on(event_types.MESSAGE_RECEIVED, async (msgId) => {
         const DEBUG_PREFIX_MSG = `[${EXTENSION_NAME} - Msg Rcvd]`;
         // console.log(`\n${DEBUG_PREFIX_MSG} === Handler Start === MsgId: ${msgId}`);
 
-        let presetCollected = false;
-        let generatedKey = null;
+        let collectedAndSaved = false; // 플래그 이름 변경
         try {
             const context = getContext();
-            // 컨텍스트 또는 채팅 데이터 유효성 검사
             if (!context || !context.chat || context.chat.length === 0) {
-                console.warn(`${DEBUG_PREFIX_MSG} Preset Info: Invalid context or empty chat.`);
+                // console.warn(`${DEBUG_PREFIX_MSG} Invalid context or empty chat.`);
                 return;
             }
 
-            // 마지막 AI 메시지 식별 (마지막이 사용자면 그 이전 메시지 확인)
+            // 마지막 AI 메시지 식별 (기존 로직과 유사)
             let messageIndex = context.chat.length - 1;
             let message = context.chat[messageIndex];
             if (message && message.is_user && messageIndex > 0) {
@@ -345,75 +500,51 @@ jQuery(async () => {
                  message = context.chat[messageIndex];
             }
 
-            // 식별된 메시지가 AI 메시지이고 시스템 메시지가 아닐 경우 처리
+            // 식별된 메시지가 AI 메시지일 경우 처리
             if (message && !message.is_user && !message.is_system) {
-                // 현재 활성화된 스와이프 정보 가져오기 (없으면 메시지 자체 사용)
                 const currentIndex = message.swipe_id ?? 0;
-                let currentSwipeData = message; // 기본값: 메시지 자체
+                let currentSwipeData = message;
                 if (Array.isArray(message.swipe_info) && currentIndex >= 0 && currentIndex < message.swipe_info.length && message.swipe_info[currentIndex]) {
-                    currentSwipeData = message.swipe_info[currentIndex]; // 유효한 스와이프 데이터 사용
-                } else if (Array.isArray(message.swipe_info)) {
-                    // 스와이프 배열은 있지만 인덱스가 잘못된 경우 경고
-                    console.warn(`${DEBUG_PREFIX_MSG} Using message object as fallback for swipe data (Index: ${currentIndex} out of bounds or invalid).`);
+                    currentSwipeData = message.swipe_info[currentIndex];
                 }
 
-                // 키 생성을 위한 정보 추출 (Optional Chaining 사용)
                 const sendDate = currentSwipeData?.send_date;
                 const modelName = currentSwipeData?.extra?.model;
+                const generatedKey = _createSwipeKey(sendDate, modelName);
 
-                // console.log(`${DEBUG_PREFIX_MSG} Extracted for key gen - sendDate: "${sendDate}", modelName: "${modelName}"`);
-
-                // 정규화된 키 생성 시도
-                generatedKey = _createSwipeKey(sendDate, modelName);
-                // console.log(`${DEBUG_PREFIX_MSG} Generated Key: "${generatedKey}"`);
-
-                // 유효한 키가 생성되었을 경우
                 if (generatedKey) {
-                    // 현재 UI에서 프리셋 이름 가져오기
-                    const currentPresetName = _getCurrentPresetNameFromUI();
-                    // 가져온 프리셋 이름이 실제 이름인지 (폴백 문자열이 아닌지) 확인
-                    const isValidPresetName = currentPresetName &&
-                                             !currentPresetName.startsWith('(프리셋 정보 없음') &&
-                                             !currentPresetName.startsWith('(프리셋 정보 오류');
+                    // 데이터 수집 및 형식화 함수 호출
+                    const valueObject = _collectAndFormatPresetData(currentSwipeData);
 
-                    if (isValidPresetName) {
-                        // 유효한 프리셋 이름일 때만 임시 변수 업데이트 및 수집 플래그 설정
-                        latestPresetInfo = { key: generatedKey, value: currentPresetName };
-                        presetCollected = true; // 수집 성공 플래그
-                        // console.log(`${DEBUG_PREFIX_MSG} Preset Info Collected: Key="${generatedKey}", Preset="${currentPresetName}"`);
+                    // 유효한 객체가 반환되었을 경우 임시 변수 업데이트
+                    if (valueObject) {
+                        latestPresetInfo = { key: generatedKey, value: valueObject };
+                        collectedAndSaved = true; // 성공 플래그 설정
+                        // console.log(`${DEBUG_PREFIX_MSG} Prepared data for key "${generatedKey}":`, valueObject);
+                        saveState(); // 즉시 저장 시도 (Debounced)
                     } else {
-                        // 폴백 문자열일 경우, 수집/저장하지 않음
-                        // console.log(`${DEBUG_PREFIX_MSG} Preset name is a fallback value ("${currentPresetName}"). Skipping collection for key "${generatedKey}".`);
+                         // console.log(`${DEBUG_PREFIX_MSG} No valid data collected for key "${generatedKey}". Skipping save.`);
                     }
                 } else {
-                     // 키 생성 실패 시 로그 (주로 send_date 누락)
-                     // console.log(`${DEBUG_PREFIX_MSG} Key generation failed (likely missing sendDate). Skipping preset collection.`);
+                    // console.log(`${DEBUG_PREFIX_MSG} Key generation failed. Skipping collection.`);
                 }
             } else {
-                 // 처리 대상 AI 메시지가 아닐 경우 로그
-                 // console.log(`${DEBUG_PREFIX_MSG} Last message is not a processable AI message (is_user: ${message?.is_user}, is_system: ${message?.is_system}).`);
+                 // console.log(`${DEBUG_PREFIX_MSG} Last message is not a processable AI message.`);
             }
         } catch (error) {
-            // 프리셋 정보 수집 중 예외 발생 시 에러 로그
-            console.error(`${DEBUG_PREFIX_MSG} Error during preset info collection:`, error);
+            console.error(`${DEBUG_PREFIX_MSG} Error during preset info processing:`, error);
         }
 
-        // 프리셋 정보가 성공적으로 수집되었을 경우 저장 함수 호출
-        if (presetCollected) {
-            // console.log(`${DEBUG_PREFIX_MSG} Calling saveState() to save collected preset info.`);
-            saveState(); // 메타데이터에 조건부 저장 시도
-        } else {
-            // 수집 실패 시 저장 건너뜀 로그
-            // console.log(`${DEBUG_PREFIX_MSG} No preset info collected, skipping saveState().`);
-        }
-
+        // if (!collectedAndSaved) {
+        //     console.log(`${DEBUG_PREFIX_MSG} No preset info was collected or saved.`);
+        // }
         // console.log(`${DEBUG_PREFIX_MSG} === Handler End === MsgId: ${msgId}\n`);
     });
 
     // --- UI 요소 이벤트 리스너 등록 ---
 
-    // 캐릭터 이름 클릭 시: 모델/프리셋 정보 표시 (기존 리스너 제거 후 재등록)
-    $(document).off(`click.${EXTENSION_NAME}`, '#chat .mes .name_text'); // 네임스페이스 사용 권장
+    // 캐릭터 이름 클릭 시: 모델/프리셋 정보 표시 (수정됨 - Text Comp 분기 명확화)
+    $(document).off(`click.${EXTENSION_NAME}`, '#chat .mes .name_text'); 
     $(document).on(`click.${EXTENSION_NAME}`, '#chat .mes .name_text', async function (e) {
         e.preventDefault(); // 기본 동작 방지
         e.stopPropagation(); // 이벤트 버블링 방지
@@ -431,10 +562,8 @@ jQuery(async () => {
 
         try {
             const context = globalThis.SillyTavern.getContext();
-            const chatMetadata = context?.chatMetadata ?? null;
-
             // 컨텍스트, 채팅 기록, 메타데이터 유효성 검사
-            if (!context || !context.chat || !chatMetadata) {
+            if (!context || !context.chat || !context.chatMetadata) {
                 console.warn(`${DEBUG_PREFIX_CLICK} Global Context, chat, or chatMetadata not available.`);
                 return;
             }
@@ -476,86 +605,167 @@ jQuery(async () => {
                 activeDataSource = message.swipe_info[currentSwipeIndex];
                 toastSwipeText = ` (스와이프 ${currentSwipeIndex + 1})`; // 예: " (스와이프 3)"
             } else if (Array.isArray(message.swipe_info)) {
-                // 스와이프 배열은 있지만 인덱스가 잘못된 경우 로그
+                // 스와이프 배열은 있지만 인덱스가 잘못된 경우 로그 (선택적)
                  // console.log(`${DEBUG_PREFIX_CLICK} Using message itself (invalid swipe index ${currentSwipeIndex}) for message ID: ${messageId}`);
             }
 
             // 1. 모델 이름 가져오기 (activeDataSource에서)
             const modelName = activeDataSource?.extra?.model || '(모델 정보 없음)';
 
-            // 2. 프리셋 이름 가져오기
+            // 2. 프리셋/템플릿 정보 조회 준비
             const sendDate = activeDataSource?.send_date;
             const modelNameToUse = activeDataSource?.extra?.model; // 조회용 키 생성에 사용할 모델 이름
+            const lookupKey = _createSwipeKey(sendDate, modelNameToUse); // 조회용 키 생성 시도
 
-            let presetName = '(프리셋 정보 없음)';
-            let lookupKey = null;
+			let displayTimeoutMs = 5000; // 기본 타임아웃: 5초 (Non-Text Comp, 레거시, 정보 없음 용)
+            let toastTitle = `메시지 #${messageId}${toastSwipeText} 정보`;
+            let toastContentHtml = `<br><strong>모델:</strong><br>${modelName}<br><br>`; // 기본 모델 정보 항상 표시
+            let storedValue = null;
 
-            // console.log(`${DEBUG_PREFIX_CLICK} Extracted for lookup - sendDate: "${sendDate}", modelName: "${modelNameToUse}"`);
-
-            // 조회용 키 생성 시도
-            lookupKey = _createSwipeKey(sendDate, modelNameToUse);
-            // console.log(`${DEBUG_PREFIX_CLICK} Generated Lookup Key: "${lookupKey}"`);
-
-            // 유효한 키가 생성되었을 경우 메타데이터에서 프리셋 이름 조회
-            if (lookupKey) {
-                const presetStorage = chatMetadata?.[METADATA_KEY]; // 메타데이터 저장소 접근
-
-                if (presetStorage && typeof presetStorage === 'object') {
-                    // 저장소에서 키로 값(프리셋 이름) 조회, 없으면 '기록 없음' 메시지
-                    presetName = presetStorage[lookupKey] || '(프리셋 정보 없음)';
-                } else {
-                    // 메타데이터 저장소 자체가 없거나 객체가 아닐 경우
-                    presetName = '(프리셋 정보 없음 - 메타데이터 저장소 누락)';
-                     console.warn(`${DEBUG_PREFIX_CLICK} Preset storage (${METADATA_KEY}) not found or not an object in chatMetadata.`);
-                }
-            } else {
-                // 키 생성 실패 시
-                presetName = '(프리셋 정보 없음 - 유효 키 생성 불가)';
+            // 메타데이터에서 저장된 값 조회
+            if (lookupKey && context.chatMetadata[METADATA_KEY]) {
+                storedValue = context.chatMetadata[METADATA_KEY][lookupKey];
             }
 
-            // 조회 결과 로그 (선택적 디버깅)
-            // console.log(`${DEBUG_PREFIX_CLICK} Result -> Message: ${messageId}, Swipe Index: ${currentSwipeIndex}, Key: ${lookupKey}, Model: ${modelName}, Preset: ${presetName}`);
+            // --- 데이터 타입 및 내용에 따라 표시 내용 구성 ---
+            if (storedValue && typeof storedValue === 'object') {
+                // --- 최신 객체 데이터 처리 ---
+                const isTextCompletionData = storedValue.hasOwnProperty('ctxTpl') || storedValue.hasOwnProperty('insTpl') || storedValue.hasOwnProperty('sysPpt');
+
+                if (isTextCompletionData) {
+                    // --- Text Completion 데이터 표시 로직 ---
+					displayTimeoutMs = 9000; // Text Completion은 9초로 설정 변경!
+                    toastContentHtml += `<strong>프롬프트 (Text Completion) :</strong><br>`;
+                    const missingKeys = [];
+
+                    // Generation Preset (단순 이름 역할)
+                    if (storedValue.hasOwnProperty('genPreset')) {
+                        toastContentHtml += `  - Preset : ${storedValue.genPreset}<br>`;
+                    } else {
+                        toastContentHtml += `  - Preset : (정보 없음)<br>`;
+                        // genPreset 누락은 여전히 문제일 수 있음
+                        console.error(`${DEBUG_PREFIX_CLICK} Potential Issue: 'genPreset' key missing in Text Completion object for key ${lookupKey}!`, storedValue);
+                        missingKeys.push('genPreset'); // 이것도 누락으로 간주
+                    }
+
+                    //toastContentHtml += `  --- 주요 프롬프트 ---<br>`; // 주요 프롬프트 구분
+
+                    // Instruct Template (주요 프롬프트 1)
+                    if (storedValue.hasOwnProperty('insTpl')) {
+                        toastContentHtml += `  - Instruct Template: ${storedValue.insTpl}<br>`;
+                    } else {
+                        toastContentHtml += `  - Instruct Template: (정보 없음)<br>`;
+                        missingKeys.push('insTpl');
+                    }
+                    // System Prompt (주요 프롬프트 2)
+                    if (storedValue.hasOwnProperty('sysPpt')) {
+                        toastContentHtml += `  - System Prompt: ${storedValue.sysPpt}<br>`;
+                    } else {
+                        toastContentHtml += `  - System Prompt: (정보 없음)<br>`;
+                        missingKeys.push('sysPpt');
+                    }
+                     // Context Template (부가 정보)
+					 //현재는 생략
+					 /*
+                    if (storedValue.hasOwnProperty('ctxTpl')) {
+                        toastContentHtml += `  - Context Template: ${storedValue.ctxTpl}<br>`;
+                    } else {
+                        toastContentHtml += `  - Context Template: (정보 없음)<br>`;
+                        missingKeys.push('ctxTpl');
+                    }
+					*/
+
+                    // Text Completion 데이터인데 누락된 키가 있으면 경고 로그
+                    if (missingKeys.length > 0) {
+                        console.warn(`${DEBUG_PREFIX_CLICK} Text Completion data for key ${lookupKey} is missing expected keys: [${missingKeys.join(', ')}]`, storedValue);
+                    }
+
+                } else {
+                    // --- Non-Text Completion 데이터 표시 로직 (대표적으로 Chat Completion) ---
+                    toastContentHtml += `<strong>프롬프트 :</strong><br>`; // 다른 제목 사용
+
+                    // genPreset이 핵심 정보
+                    if (storedValue.hasOwnProperty('genPreset')) {
+                        // 여기서는 레이블 없이 값만 강조해서 보여주는 것이 의미 전달에 더 좋을 수 있음
+                        toastContentHtml += `  ${storedValue.genPreset}<br>`;
+                        // 또는 명시적 레이블 사용:
+                        // toastContentHtml += `  - Preset/Prompt: ${storedValue.genPreset}<br>`;
+                    } else {
+                        // Non-Text Comp 객체인데 genPreset이 없으면 심각한 오류
+                        toastContentHtml += `  (프리셋 정보 없음 - 저장 오류)<br>`;
+                        console.error(`${DEBUG_PREFIX_CLICK} Critical: 'genPreset' key missing in non-Text Completion object for key ${lookupKey}!`, storedValue);
+                    }
+                    // 다른 필드는 이 API 타입에서는 의미가 없으므로 표시하지 않음
+                }
+
+                    toastContentHtml += `<br>`;
+            } else if (typeof storedValue === 'string') {
+                // --- 레거시 문자열 데이터 처리 ---
+                toastContentHtml += `<strong>레거시 :</strong><br>이전 버전 데이터입니다. 최신 정보를 보려면 마이그레이션이 필요합니다.<br>명령어: <code>/pteMigratePresetData</code>`;
+                // 디버그용 콘솔 로그 (값 확인용)
+                console.log(`[${DEBUG_PREFIX_CLICK} - Legacy] MsgID ${messageId}, Key ${lookupKey}, Value: "${storedValue}"`);
+
+            } else {
+                // --- 저장된 정보 없음 ---
+                toastContentHtml += `<strong>사용 설정:</strong><br>(저장된 프리셋/템플릿 정보 없음)`;
+                // 키는 있는데 값이 null, undefined 등이거나, 키 자체가 없는 경우
+                // console.log(`${DEBUG_PREFIX_CLICK} No preset/template info found for key ${lookupKey}`);
+            }
 
             // 3. Toastr 알림으로 정보 표시
-            const toastTitle = `메시지 #${messageId}${toastSwipeText} 정보`;
-            const toastContentHtml = `
-                <strong>모델:</strong><br>${modelName}<br><br>
-                <strong>프리셋:</strong><br>${presetName}
-            `;
             // Toastr 옵션 설정
             const toastOptions = {
                 "closeButton": true,
                 "progressBar": true,
                 "positionClass": "toast-top-center", // 화면 상단 중앙
-                "timeOut": "7000", // 7초 동안 표시
+				"timeOut": String(displayTimeoutMs), // 결정된 타임아웃 값 사용 (문자열로)
                 "extendedTimeOut": "2000", // 마우스 오버 시 추가 표시 시간
-                "escapeHtml": false // HTML 태그 사용 허용
+                "escapeHtml": false // HTML 태그 사용 허용 (<code> 등)
             };
 
             // Toastr 라이브러리가 로드되었는지 확인 후 알림 표시
             if (typeof toastr === 'object' && typeof toastr.info === 'function') {
                 toastr.info(toastContentHtml, toastTitle, toastOptions);
             } else {
-                // Toastr 없으면 기본 alert 창 사용 (Fallback)
-                console.error(`${DEBUG_PREFIX_CLICK} Toastr object is not available.`);
-                alert(`${toastTitle}\n\n모델:\n${modelName}\n\n프리셋:\n${presetName}`);
+                // Toastr 없으면 콘솔에만 오류 기록 (Fallback alert 제거)
+                // 콘솔 출력을 위해 HTML 태그를 간단히 제거하거나 줄바꿈으로 변경
+                const consoleContent = toastContentHtml.replace(/<br>/g, '\n')
+                                                     .replace(/<strong>(.*?)<\/strong>/g, '$1') // strong 태그 제거
+                                                     .replace(/<code>(.*?)<\/code>/g, '$1')   // code 태그 제거
+                                                     .replace(/<.*?>/g, ''); // 나머지 태그 제거
+                console.error(`${DEBUG_PREFIX_CLICK} Toastr object is not available. Title: ${toastTitle}, Content:\n${consoleContent}`);
             }
 
         } catch (error) {
             // 이름 클릭 처리 중 예외 발생 시 에러 로그 및 알림
             console.error(`${DEBUG_PREFIX_CLICK} Unexpected error displaying info for message ID ${messageId} (name click):`, error);
-            toastr.error('정보를 표시하는 중 예상치 못한 오류가 발생했습니다.');
+            if (typeof toastr === 'object' && typeof toastr.error === 'function') {
+                toastr.error('정보를 표시하는 중 예상치 못한 오류가 발생했습니다.');
+            }
         }
-    });
+    }); // end of click handler
 
-    // --- 슬래시 커맨드 등록 ---
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'pteCleanOrphanData', // 커맨드 이름 (예: /pteCleanOrphanData)
-        callback: _cleanupOrphanPresetData, // 실행할 함수 연결
-        helpString: 'Preset Tracker Enhanced: 사용하지 않는 프리셋 기록(불필요 데이터)을 정리합니다.', // 도움말 설명
-        returns: '정리된 항목 수를 포함한 결과 메시지를 반환합니다.' // 반환값 설명 (선택적)
-    }));
-
-    console.log(`[${EXTENSION_NAME}] Event Listeners & Slash Command Registered.`);
-    console.log(`[${EXTENSION_NAME}] Extension Loaded Successfully.`);
 });
+
+
+
+
+
+// --- 슬래시 커맨드 등록 ---
+SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+	name: 'pteCleanOrphanData',
+	callback: _cleanupOrphanPresetData,
+	helpString: 'Preset Tracker Enhanced: 사용하지 않는 프리셋 기록(불필요 데이터)을 정리합니다.',
+	returns: '정리된 항목 수를 포함한 결과 메시지를 반환합니다.'
+}));
+
+// 신규 마이그레이션 커맨드 등록
+SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+	name: 'pteMigratePresetData',
+	callback: _migrateLegacyPresetData,
+	helpString: 'Preset Tracker Enhanced: Beta1 버전의 데이터를 이후 버전으로 마이그레이션합니다 (이 작업은 채팅방마다 수행해주어야합니다)',
+	returns: '변환된 항목 수를 포함한 결과 메시지를 반환합니다.'
+}));
+
+console.log(`[${EXTENSION_NAME}] Event Listeners & Slash Commands Registered.`);
+console.log(`[${EXTENSION_NAME}] Extension Loaded Successfully.`);
