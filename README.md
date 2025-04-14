@@ -28,7 +28,7 @@ Preset Tracker Enhanced는 SillyTavern 확장 기능으로, 각 AI 메시지 또
 *   **레거시 데이터 마이그레이션 (`/pteMigratePresetData`):**
     *   초기 버전(Beta1)의 문자열 데이터를 현재의 객체 형식으로 변환합니다. (채팅별 실행 필요. Beta2 버전 이후부터 이 확장 기능을 사용하기 시작했다면 실행할 필요가 없습니다.)
 
-*   **정보 강제 업데이트 (`/pteForceSavePreset messageId=num swipeNumber=num model=string):**
+*   **정보 강제 업데이트 (`/pteForceSavePreset messageId=num swipeNumber=num model=string`):**
     *   이 명령어는 해당 메세지 번호의 정보를 실행시마다 '덮어쓰기'합니다. 기존의 1회만 등록과 다르므로 사용시 주의하세요.
     *   swipeNumber와 model은 생략 가능합니다. (생략시 각각 자동으로 현재 값을 선택하며, model에 auto를 입력할시 UI를 기준으로 현재 모델값을 받아옵니다. 이 값은 채팅 파일의 extra-model에 등록된 값과 다를 수 있습니다.)
 
