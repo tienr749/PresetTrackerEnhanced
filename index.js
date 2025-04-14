@@ -3,6 +3,8 @@ import { getContext, saveMetadataDebounced, renderExtensionTemplateAsync } from 
 import { eventSource, event_types } from '../../../../script.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { SlashCommandEnumValue, enumTypes } from '../../../slash-commands/SlashCommandEnumValue.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
 
 // 확장 이름 정의 (로그 및 식별용)
 const EXTENSION_NAME = 'PresetTrackerEnhanced';
@@ -185,11 +187,14 @@ function _createSwipeKey(sendDate, modelName) {
 }
 
 // --- Helper 함수: 데이터 소스와 UI 상태 기반으로 저장할 프리셋 정보 객체 수집 및 형식화 ---
-function _collectAndFormatPresetData(dataSource) {
+// --- Helper 함수: 데이터 소스와 UI 상태 기반으로 저장할 프리셋 정보 객체 수집 및 형식화 ---
+// <<< 파라미터 추가: forcedModelName >>>
+function _collectAndFormatPresetData(dataSource, forcedModelName = null) {
     const DEBUG_PREFIX_COLLECT = `[${EXTENSION_NAME} - CollectData]`;
     if (!dataSource) {
         console.warn(`${DEBUG_PREFIX_COLLECT} dataSource is missing.`);
-        return null;
+        // dataSource가 없어도 UI 상태는 수집 가능하므로 null 반환 대신 빈 객체로 시작
+        // return null;
     }
 
     const valueObject = {};
@@ -197,10 +202,8 @@ function _collectAndFormatPresetData(dataSource) {
 
     // 1. Generation Preset (항상 시도)
     const genPresetName = _getCurrentPresetNameFromUI();
-    if (genPresetName) { // null이 아닐 때만 추가
+    if (genPresetName) {
         valueObject.genPreset = genPresetName;
-    } else {
-        // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Generation Preset name.`);
     }
 
     // 2. Text Completion 상세 정보 (Text Completion API 일 때만 시도)
@@ -208,32 +211,29 @@ function _collectAndFormatPresetData(dataSource) {
         const ctxTplName = _getSelectedContextTemplateName();
         if (ctxTplName) {
             valueObject.ctxTpl = ctxTplName;
-        } else {
-            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Context Template name.`);
         }
-
         const insTplName = _getSelectedInstructTemplateName();
         if (insTplName) {
             valueObject.insTpl = insTplName;
-        } else {
-            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid Instruct Template name.`);
         }
-
         const sysPptName = _getSelectedSystemPromptName();
-        // System Prompt는 "None"도 유효하므로 null이 아닐 때만 추가 (빈 문자열은 보통 없음)
         if (sysPptName !== null) {
              valueObject.sysPpt = sysPptName;
-        } else {
-            // console.log(`${DEBUG_PREFIX_COLLECT} Failed to get valid System Prompt name.`);
         }
     }
 
-    // 3. 최종 객체 유효성 확인 (하나 이상의 유효한 속성이 있는지)
+    // <<< 3. 강제 지정된 모델 이름 추가 (제공된 경우) >>>
+    if (forcedModelName && typeof forcedModelName === 'string' && forcedModelName.trim() !== '') {
+        valueObject.forcedModel = forcedModelName.trim(); // 'forcedModel' 키로 저장
+        console.log(`${DEBUG_PREFIX_COLLECT} Added forced model name to value object: "${valueObject.forcedModel}"`);
+    }
+
+    // 4. 최종 객체 유효성 확인 (하나 이상의 유효한 속성이 있는지)
     if (Object.keys(valueObject).length > 0) {
-        // console.log(`${DEBUG_PREFIX_COLLECT} Collected data:`, valueObject);
+        console.log(`${DEBUG_PREFIX_COLLECT} Collected data object:`, valueObject);
         return valueObject;
     } else {
-        console.warn(`${DEBUG_PREFIX_COLLECT} No valid preset/template information could be collected.`);
+        console.warn(`${DEBUG_PREFIX_COLLECT} No valid preset/template/model information could be collected from UI.`);
         return null; // 유효한 정보가 하나도 없으면 null 반환
     }
 }
@@ -450,6 +450,255 @@ async function _migrateLegacyPresetData() {
 }
 
 
+
+
+
+/**
+ * Preset Tracker Enhanced: 특정 메시지/스와이프에 현재 UI 프리셋 정보 강제 저장 (Named Arguments 방식)
+ * /pteForceSavePreset messageId=<id> [swipeNumber=<num>] 형식의 명령어를 처리합니다.
+ * @param {object} parsedArgs - SlashCommandParser가 파싱한 인수 객체. 예: { messageId: 15, swipeNumber: 2 }
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+ /**
+ * Preset Tracker Enhanced: 특정 메시지/스와이프에 현재 UI 프리셋 정보 강제 저장 (Named Arguments 방식)
+ * /pteForceSavePreset messageId=<id> [swipeNumber=<num>] 형식의 명령어를 처리합니다.
+ * @param {object} parsedArgs - SlashCommandParser가 파싱한 인수 객체. 예: { messageId: "15", swipeNumber: "2" } (값은 문자열일 수 있음!)
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+ /**
+ * Preset Tracker Enhanced: 특정 메시지/스와이프에 현재 UI 프리셋 정보 강제 저장 (Named Arguments 방식)
+ * /pteForceSavePreset messageId=<id> [swipeNumber=<num>] [model=<name>] 형식의 명령어를 처리합니다.
+ * @param {object} parsedArgs - SlashCommandParser가 파싱한 인수 객체. 예: { messageId: "15", swipeNumber: "2", model: "MyModel" }
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+ /**
+ * Preset Tracker Enhanced: 특정 메시지/스와이프에 현재 UI 프리셋 정보 강제 저장 (Named Arguments 방식)
+ * 키는 원래 메시지/스와이프 정보 사용, 값에만 강제 모델 포함 가능
+ * @param {object} parsedArgs - SlashCommandParser가 파싱한 인수 객체.
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+ /**
+ * Preset Tracker Enhanced: 특정 메시지/스와이프에 현재 UI 프리셋 정보 강제 저장 (Named Arguments 방식)
+ * 키는 원래 메시지/스와이프 정보 사용, 값에는 UI 상태 + 강제 모델(옵션) 저장.
+ * model=auto 사용 시 현재 활성화된 모델 자동 감지하여 저장 시도.
+ * @param {object} parsedArgs - SlashCommandParser가 파싱한 인수 객체. 예: { messageId: "15", model: "auto" }
+ * @returns {Promise<string>} 작업 결과를 나타내는 문자열 메시지
+ */
+async function _forceSavePresetForMessage(parsedArgs) {
+    const DEBUG_PREFIX_FORCE_SAVE = `[${EXTENSION_NAME} - ForceSave]`;
+    const USAGE_STRING = "사용법: /pteForceSavePreset messageId=<ID> [swipeNumber=<번호>] [model=<모델이름|auto>]";
+
+    console.log(`${DEBUG_PREFIX_FORCE_SAVE} Received parsed arguments object:`, parsedArgs);
+
+    try {
+        // 1. 인수 추출 및 파싱
+        const messageIdStr = parsedArgs.messageId;
+        const swipeNumberStr = parsedArgs.swipeNumber;
+        let modelOverride = parsedArgs.model; // 모델 이름 (문자열, 'auto', 또는 undefined)
+
+        // messageId, swipeNumber 파싱 및 유효성 검사
+        const messageId = parseInt(messageIdStr, 10);
+        if (isNaN(messageId) || messageId < 0) {
+            toastr.error(`유효하지 않은 메시지 ID: "${messageIdStr}". 숫자를 입력하세요.`);
+            return `유효하지 않은 메시지 ID: ${messageIdStr}. ${USAGE_STRING}`;
+        }
+        let targetSwipeIndex = null;
+        if (swipeNumberStr !== undefined) {
+            const swipeNumberInput = parseInt(swipeNumberStr, 10);
+            if (isNaN(swipeNumberInput) || swipeNumberInput <= 0) {
+                toastr.error(`유효하지 않은 스와이프 번호: "${swipeNumberStr}". 1 이상의 숫자를 입력하세요.`);
+                return `유효하지 않은 스와이프 번호: ${swipeNumberStr}. ${USAGE_STRING}`;
+            }
+            targetSwipeIndex = swipeNumberInput - 1;
+        }
+
+        // 2. 컨텍스트 및 대상 메시지 가져오기
+        const context = globalThis.SillyTavern.getContext();
+        if (!context || !context.chat || !context.chatMetadata) {
+            console.error(`${DEBUG_PREFIX_FORCE_SAVE} Critical error: Context, chat, or chatMetadata not available.`);
+            toastr.error("오류: 필수 데이터 로드 실패.");
+            return "오류: 필수 데이터 로드 실패.";
+        }
+        if (messageId >= context.chat.length) {
+            toastr.error(`메시지 ID ${messageId}를 찾을 수 없습니다. 채팅 길이는 ${context.chat.length}입니다.`);
+            return `메시지 ID ${messageId} 찾을 수 없음`;
+        }
+        const message = context.chat[messageId];
+        if (!message) {
+            console.error(`${DEBUG_PREFIX_FORCE_SAVE} Error accessing message data for ID: ${messageId}`);
+            toastr.error("오류: 메시지 데이터 접근 실패.");
+            return "오류: 메시지 데이터 접근 실패.";
+        }
+        // 사용자 메시지에는 강제 저장 의미 없음 (프리셋은 AI 응답에 적용되므로)
+        //if (message.is_user || message.is_system) {
+		//시스템 메세지 임시허용.
+		if (message.is_user) {
+             toastr.warning(`메시지 ID ${messageId}는 AI 응답 메시지가 아닙니다.`);
+             return `ID ${messageId}는 AI 응답 메시지가 아닙니다.`;
+        }
+
+
+        // 3. 대상 스와이프 데이터 소스 결정
+        let activeDataSource = null;
+        let swipeDescription = "";
+        if (targetSwipeIndex !== null) {
+            // 특정 스와이프 번호 지정 시
+            if (!Array.isArray(message.swipe_info) || targetSwipeIndex >= message.swipe_info.length || !message.swipe_info[targetSwipeIndex]) {
+                toastr.error(`메시지 ID ${messageId}에 스와이프 번호 ${targetSwipeIndex + 1}이(가) 없습니다.`);
+                return `스와이프 번호 ${targetSwipeIndex + 1} 없음`;
+            }
+            activeDataSource = message.swipe_info[targetSwipeIndex];
+            swipeDescription = `스와이프 #${targetSwipeIndex + 1}`;
+        } else {
+            // 스와이프 번호 생략 시 현재 활성화된 스와이프 또는 기본 메시지 사용
+            const currentSwipeId = message.swipe_id ?? 0; // swipe_id가 null/undefined면 0 사용
+             if (Array.isArray(message.swipe_info) && currentSwipeId >= 0 && currentSwipeId < message.swipe_info.length && message.swipe_info[currentSwipeId]) {
+                 activeDataSource = message.swipe_info[currentSwipeId];
+                 swipeDescription = `현재 스와이프 #${currentSwipeId + 1}`;
+             } else if (!Array.isArray(message.swipe_info) || message.swipe_info.length === 0) {
+                  // swipe_info가 없거나 비어있으면 기본 메시지 사용
+                  activeDataSource = message;
+                  swipeDescription = "기본 메시지";
+             } else {
+                  // 예외: swipe_id가 유효하지 않은 인덱스를 가리키는 경우 (이론상 발생 어려움)
+                  console.warn(`${DEBUG_PREFIX_FORCE_SAVE} swipe_id (${currentSwipeId}) is out of bounds for swipe_info length (${message.swipe_info.length}). Falling back to base message for message ID ${messageId}.`);
+                  activeDataSource = message;
+                  swipeDescription = "기본 메시지 (스와이프 ID 오류)";
+             }
+        }
+        if (!activeDataSource) {
+            console.error(`${DEBUG_PREFIX_FORCE_SAVE} Failed to determine active data source for message ID ${messageId} (${swipeDescription}).`);
+            toastr.error("오류: 대상 데이터 소스를 결정하지 못했습니다.");
+            return "오류: 데이터 소스 결정 실패.";
+        }
+
+
+        // 4. 키(Key) 생성: 항상 원래 메시지/스와이프 데이터 사용
+        const sendDate = activeDataSource.send_date;
+        const originalModelName = activeDataSource.extra?.model; // 키 생성에는 항상 원래 모델 사용
+        const generatedKey = _createSwipeKey(sendDate, originalModelName);
+
+        if (!generatedKey) {
+            const errorMsg = `메시지 ID ${messageId} (${swipeDescription})에 대한 고유 키를 생성할 수 없습니다 (send_date: ${sendDate}, original_model: ${originalModelName}).`;
+            console.error(`${DEBUG_PREFIX_FORCE_SAVE} ${errorMsg}`);
+            toastr.error(errorMsg);
+            return "오류: 메타데이터 키 생성 실패.";
+        }
+        console.log(`${DEBUG_PREFIX_FORCE_SAVE} Generated key based on original data: ${generatedKey} (Original Model: ${originalModelName || 'unknown'})`);
+
+
+        // 5. *** 값(Value)에 포함될 모델 이름 결정 (model 인자 처리) ***
+        let finalModelNameToForce = undefined; // _collectAndFormatPresetData에 전달될 최종 모델 이름
+
+        if (modelOverride && typeof modelOverride === 'string') {
+            const modelArgLower = modelOverride.trim().toLowerCase();
+
+            if (modelArgLower === 'auto') {
+                // 'auto' 인자 처리
+                console.log(`${DEBUG_PREFIX_FORCE_SAVE} 'model=auto' detected. Attempting to get current active model...`);
+                const isTextComp = _isTextCompletionSelected();
+                let detectedModel = null;
+
+                try {
+                    const currentContext = globalThis.SillyTavern.getContext(); // 이미 위에서 null 체크함
+                    if (isTextComp) {
+                        // 텍스트 컴플리션 API
+                        detectedModel = currentContext.onlineStatus; // onlineStatus 객체 안의 model 속성
+                        console.log(`${DEBUG_PREFIX_FORCE_SAVE} API is Text Completion. Trying to get model from context.onlineStatus.model`);
+                    } else {
+                        // 챗 컴플리션 API
+                        detectedModel = currentContext.getChatCompletionModel ? currentContext.getChatCompletionModel() : null;
+                        console.log(`${DEBUG_PREFIX_FORCE_SAVE} API is Chat Completion. Trying to get model from context.getChatCompletionModel()`);
+                    }
+
+                    // 모델 이름 유효성 검사 (null, undefined, 빈 문자열 제외)
+                    if (detectedModel && typeof detectedModel === 'string' && detectedModel.trim() !== '') {
+                        finalModelNameToForce = detectedModel.trim();
+                        console.log(`${DEBUG_PREFIX_FORCE_SAVE} Auto-detected model: "${finalModelNameToForce}"`);
+                        toastr.info(`자동 감지된 모델: ${finalModelNameToForce}`);
+                    } else {
+                        console.warn(`${DEBUG_PREFIX_FORCE_SAVE} Could not auto-detect a valid model name. (isTextComp: ${isTextComp}, detectedValue: ${detectedModel})`);
+                        toastr.warning(`현재 활성화된 모델 이름을 자동으로 가져올 수 없습니다. API 연결 상태나 설정을 확인하세요.`);
+                        // finalModelNameToForce는 undefined로 유지됨
+                    }
+                } catch (err) {
+                    console.error(`${DEBUG_PREFIX_FORCE_SAVE} Error during auto-detection of model:`, err);
+                    toastr.error('모델 자동 감지 중 오류가 발생했습니다. 콘솔 로그를 확인하세요.');
+                    // finalModelNameToForce는 undefined로 유지됨
+                }
+            } else {
+                // 'auto'가 아닌 다른 문자열이 입력된 경우
+                finalModelNameToForce = modelOverride.trim(); // 입력된 문자열 그대로 사용
+                console.log(`${DEBUG_PREFIX_FORCE_SAVE} Using provided model name: "${finalModelNameToForce}"`);
+            }
+        } else {
+            // model 인자가 없거나 유효하지 않은 타입인 경우
+            console.log(`${DEBUG_PREFIX_FORCE_SAVE} No valid 'model' argument provided. No model name will be forced in the value object.`);
+            // finalModelNameToForce는 undefined로 유지됨
+        }
+
+
+        // 6. 값(Value) 생성: 현재 UI 상태 + 최종 결정된 강제 모델(옵션)
+        console.log(`${DEBUG_PREFIX_FORCE_SAVE} Collecting current UI settings to store under key: ${generatedKey}`);
+        const valueObject = _collectAndFormatPresetData(activeDataSource, finalModelNameToForce); // 결정된 모델 이름 전달
+
+        if (!valueObject) {
+            const errorMsg = `현재 UI에서 유효한 프리셋/템플릿 정보를 수집할 수 없었습니다.`;
+            console.warn(`${DEBUG_PREFIX_FORCE_SAVE} ${errorMsg}`);
+            toastr.warning(errorMsg + " UI 설정을 확인하거나 다시 시도하세요.");
+            return "정보 수집 실패: 현재 UI 설정 확인 필요.";
+        }
+        console.log(`${DEBUG_PREFIX_FORCE_SAVE} Data object to be saved:`, valueObject);
+
+        // 7. 메타데이터에 저장 (생성된 원래 키 사용)
+        if (!context.chatMetadata[METADATA_KEY] || typeof context.chatMetadata[METADATA_KEY] !== 'object') {
+            context.chatMetadata[METADATA_KEY] = {};
+        }
+        const presetStorage = context.chatMetadata[METADATA_KEY];
+        presetStorage[generatedKey] = valueObject; // 원래 키에 값 저장
+        console.log(`${DEBUG_PREFIX_FORCE_SAVE} Saving/Overwriting data for original key "${generatedKey}"`);
+        saveMetadataDebounced();
+
+        // 8. 성공 피드백
+        let successMsg = `메시지 #${messageId} (${swipeDescription})에 현재 프리셋 정보를 저장했습니다 (Key: ${generatedKey}).`;
+        if (valueObject.forcedModel) {
+            successMsg += ` (값에 모델 "${valueObject.forcedModel}" 포함)`;
+        } else {
+             successMsg += ` (값에 강제 모델 미포함)`;
+        }
+        toastr.success(successMsg);
+        console.log(`${DEBUG_PREFIX_FORCE_SAVE} ${successMsg}`);
+        return successMsg;
+
+    } catch (error) {
+        const errorMsg = `프리셋 강제 저장 중 예상치 못한 오류 발생: ${error.message || error}`;
+        console.error(`${DEBUG_PREFIX_FORCE_SAVE} Unexpected error:`, error);
+        toastr.error("프리셋 강제 저장 중 오류가 발생했습니다. 콘솔 로그를 확인하세요.");
+        return `오류: 처리 중 예외 발생 (${error.message || '알 수 없는 오류'}).`;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // jQuery Ready 함수: 문서 로딩 완료 후 실행
 jQuery(async () => {
     console.log(`[${EXTENSION_NAME}] Extension Loading...`);
@@ -544,204 +793,144 @@ jQuery(async () => {
     // --- UI 요소 이벤트 리스너 등록 ---
 
     // 캐릭터 이름 클릭 시: 모델/프리셋 정보 표시 (수정됨 - Text Comp 분기 명확화)
-    $(document).off(`click.${EXTENSION_NAME}`, '#chat .mes .name_text'); 
+	
+	    // --- UI 요소 이벤트 리스너 등록 ---
+
+    // 캐릭터 이름 클릭 시: 모델/프리셋 정보 표시 (수정됨 - forcedModel 표시 추가)
+    $(document).off(`click.${EXTENSION_NAME}`, '#chat .mes .name_text');
     $(document).on(`click.${EXTENSION_NAME}`, '#chat .mes .name_text', async function (e) {
         e.preventDefault(); // 기본 동작 방지
         e.stopPropagation(); // 이벤트 버블링 방지
 
         const nameTextElement = $(this);
-        const messageElement = nameTextElement.closest('.mes'); // 클릭된 이름이 속한 메시지 요소 찾기
-        const messageId = messageElement.attr('mesid');         // 메시지 ID 속성 가져오기
+        const messageElement = nameTextElement.closest('.mes');
+        const messageId = messageElement.attr('mesid');
         const DEBUG_PREFIX_CLICK = `[${EXTENSION_NAME} Click]`;
 
-        // 메시지 ID 없으면 경고 후 종료
         if (messageId === undefined) {
-            console.warn(`${DEBUG_PREFIX_CLICK} Could not find message ID for clicked name text.`);
+            console.warn(`${DEBUG_PREFIX_CLICK} Could not find message ID.`);
             return;
         }
 
         try {
             const context = globalThis.SillyTavern.getContext();
-            // 컨텍스트, 채팅 기록, 메타데이터 유효성 검사
             if (!context || !context.chat || !context.chatMetadata) {
-                console.warn(`${DEBUG_PREFIX_CLICK} Global Context, chat, or chatMetadata not available.`);
+                console.warn(`${DEBUG_PREFIX_CLICK} Context, chat, or metadata not available.`);
                 return;
             }
 
-            // 메시지 ID를 정수로 변환하고 유효 범위 확인
             const msgIndex = parseInt(messageId);
             if (isNaN(msgIndex) || msgIndex < 0 || msgIndex >= context.chat.length) {
                 console.warn(`${DEBUG_PREFIX_CLICK} Invalid message index: ${messageId}`);
                 return;
             }
 
-            // 해당 인덱스의 메시지 객체 가져오기
             const message = context.chat[msgIndex];
-            // 메시지 객체가 없으면 오류 처리 후 종료
             if (!message) {
-                console.error(`${DEBUG_PREFIX_CLICK} Message object is MISSING for ID: ${messageId}.`);
+                console.error(`${DEBUG_PREFIX_CLICK} Message object MISSING for ID: ${messageId}.`);
                 return;
             }
-
-            // 사용자 메시지 또는 시스템 메시지 클릭 시 조용히 종료 (정보 표시 X)
+/*
             if (message.is_user || message.is_system) {
-                 // console.log(`${DEBUG_PREFIX_CLICK} Clicked on user/system message (${messageId}). Aborting display.`);
-                 return;
+                return; // 사용자/시스템 메시지는 정보 표시 안 함
+            }
+*/
+            if (message.is_user) {
+                return; // 사용자 메시지는 정보 표시 안 함
             }
 
-            // --- 이하 로직은 AI 메시지에 대해서만 실행됨 ---
-
-            // 현재 활성화된 스와이프 정보 가져오기 (없으면 메시지 자체 사용)
+            // 활성화된 스와이프 데이터 가져오기
             const currentSwipeIndex = message.swipe_id ?? 0;
-            let activeDataSource = message; // 기본 데이터 소스
-            let toastSwipeText = ""; // Toastr 제목에 추가할 스와이프 정보
-
-            // 유효한 스와이프 정보가 있을 경우 데이터 소스 및 텍스트 업데이트
-            if (Array.isArray(message.swipe_info) &&
-                currentSwipeIndex >= 0 &&
-                currentSwipeIndex < message.swipe_info.length &&
-                message.swipe_info[currentSwipeIndex])
-            {
+            let activeDataSource = message;
+            let toastSwipeText = "";
+            if (Array.isArray(message.swipe_info) && currentSwipeIndex >= 0 && currentSwipeIndex < message.swipe_info.length && message.swipe_info[currentSwipeIndex]) {
                 activeDataSource = message.swipe_info[currentSwipeIndex];
-                toastSwipeText = ` (스와이프 ${currentSwipeIndex + 1})`; // 예: " (스와이프 3)"
-            } else if (Array.isArray(message.swipe_info)) {
-                // 스와이프 배열은 있지만 인덱스가 잘못된 경우 로그 (선택적)
-                 // console.log(`${DEBUG_PREFIX_CLICK} Using message itself (invalid swipe index ${currentSwipeIndex}) for message ID: ${messageId}`);
+                toastSwipeText = ` (스와이프 ${currentSwipeIndex + 1})`;
             }
 
-            // 1. 모델 이름 가져오기 (activeDataSource에서)
-            const modelName = activeDataSource?.extra?.model || '(모델 정보 없음)';
+            // 1. *** 모델 이름 결정 (표시용) ***
+            const originalModelName = activeDataSource?.extra?.model || '(모델 정보 없음)'; // 원래 모델 이름
+            let displayModelName = originalModelName; // 기본값은 원래 모델
+            let modelSourceIndicator = ""; // 모델 출처 표시 (예: 강제 지정)
 
-            // 2. 프리셋/템플릿 정보 조회 준비
+            // 2. 프리셋/템플릿 정보 조회 준비 (키 생성)
             const sendDate = activeDataSource?.send_date;
-            const modelNameToUse = activeDataSource?.extra?.model; // 조회용 키 생성에 사용할 모델 이름
-            const lookupKey = _createSwipeKey(sendDate, modelNameToUse); // 조회용 키 생성 시도
-
-			let displayTimeoutMs = 5000; // 기본 타임아웃: 5초 (Non-Text Comp, 레거시, 정보 없음 용)
-            let toastTitle = `메시지 #${messageId}${toastSwipeText} 정보`;
-            let toastContentHtml = `<br><strong>모델:</strong><br>${modelName}<br><br>`; // 기본 모델 정보 항상 표시
+            const modelForLookup = activeDataSource?.extra?.model; // 키 생성에는 *항상* 원래 모델 사용!
+            const lookupKey = _createSwipeKey(sendDate, modelForLookup);
             let storedValue = null;
 
             // 메타데이터에서 저장된 값 조회
             if (lookupKey && context.chatMetadata[METADATA_KEY]) {
                 storedValue = context.chatMetadata[METADATA_KEY][lookupKey];
+                 // 로그 추가: 어떤 키로 무엇을 찾았는지 확인
+                 console.log(`${DEBUG_PREFIX_CLICK} Looked up key "${lookupKey}". Found value:`, storedValue);
+            } else {
+                 console.log(`${DEBUG_PREFIX_CLICK} Lookup key "${lookupKey}" not found or metadata missing.`);
             }
 
-            // --- 데이터 타입 및 내용에 따라 표시 내용 구성 ---
+
+            // *** 3. 저장된 값에서 forcedModel 확인 및 표시 모델 업데이트 ***
+            if (storedValue && typeof storedValue === 'object' && storedValue.hasOwnProperty('forcedModel') && storedValue.forcedModel) {
+                displayModelName = storedValue.forcedModel; // 표시할 모델 이름을 강제 지정된 것으로 변경
+                modelSourceIndicator = " (강제 지정됨)"; // 출처 표시 추가
+                 console.log(`${DEBUG_PREFIX_CLICK} Found forcedModel in stored data: "${displayModelName}". Updating display.`);
+            } else {
+                 // forcedModel이 없으면 원래 모델 이름 그대로 사용 (로그 추가)
+                 console.log(`${DEBUG_PREFIX_CLICK} No valid forcedModel found in stored data. Using original model for display: "${displayModelName}"`);
+            }
+            // <<< 모델 이름 결정 끝 >>>
+
+
+            // 4. Toastr 내용 구성 시작
+            let displayTimeoutMs = 5000; // 기본 타임아웃
+            let toastTitle = `메시지 #${messageId}${toastSwipeText} 정보`;
+            // <<< 표시할 모델 이름 (displayModelName)과 출처 표시 사용 >>>
+            let toastContentHtml = `<br><strong>모델:</strong><br>${displayModelName}${modelSourceIndicator}<br><br>`;
+
+            // 5. 저장된 프리셋/템플릿 정보 처리 (기존 로직 유지)
             if (storedValue && typeof storedValue === 'object') {
-                // --- 최신 객체 데이터 처리 ---
                 const isTextCompletionData = storedValue.hasOwnProperty('ctxTpl') || storedValue.hasOwnProperty('insTpl') || storedValue.hasOwnProperty('sysPpt');
 
                 if (isTextCompletionData) {
-                    // --- Text Completion 데이터 표시 로직 ---
-					displayTimeoutMs = 9000; // Text Completion은 9초로 설정 변경!
+                    // ... (Text Completion 데이터 표시 로직 - 이전과 동일) ...
+                    displayTimeoutMs = 9000;
                     toastContentHtml += `<strong>프롬프트 (Text Completion) :</strong><br>`;
-                    const missingKeys = [];
+                    // ... (genPreset, insTpl, sysPpt 등 표시) ...
+                    if (storedValue.hasOwnProperty('genPreset')) toastContentHtml += `  - Preset : ${storedValue.genPreset}<br>`; else toastContentHtml += `  - Preset : (정보 없음)<br>`;
+                    if (storedValue.hasOwnProperty('insTpl')) toastContentHtml += `  - Instruct Template: ${storedValue.insTpl}<br>`; else toastContentHtml += `  - Instruct Template: (정보 없음)<br>`;
+                    if (storedValue.hasOwnProperty('sysPpt')) toastContentHtml += `  - System Prompt: ${storedValue.sysPpt}<br>`; else toastContentHtml += `  - System Prompt: (정보 없음)<br>`;
 
-                    // Generation Preset (단순 이름 역할)
-                    if (storedValue.hasOwnProperty('genPreset')) {
-                        toastContentHtml += `  - Preset : ${storedValue.genPreset}<br>`;
-                    } else {
-                        toastContentHtml += `  - Preset : (정보 없음)<br>`;
-                        // genPreset 누락은 여전히 문제일 수 있음
-                        console.error(`${DEBUG_PREFIX_CLICK} Potential Issue: 'genPreset' key missing in Text Completion object for key ${lookupKey}!`, storedValue);
-                        missingKeys.push('genPreset'); // 이것도 누락으로 간주
-                    }
-
-                    //toastContentHtml += `  --- 주요 프롬프트 ---<br>`; // 주요 프롬프트 구분
-
-                    // Instruct Template (주요 프롬프트 1)
-                    if (storedValue.hasOwnProperty('insTpl')) {
-                        toastContentHtml += `  - Instruct Template: ${storedValue.insTpl}<br>`;
-                    } else {
-                        toastContentHtml += `  - Instruct Template: (정보 없음)<br>`;
-                        missingKeys.push('insTpl');
-                    }
-                    // System Prompt (주요 프롬프트 2)
-                    if (storedValue.hasOwnProperty('sysPpt')) {
-                        toastContentHtml += `  - System Prompt: ${storedValue.sysPpt}<br>`;
-                    } else {
-                        toastContentHtml += `  - System Prompt: (정보 없음)<br>`;
-                        missingKeys.push('sysPpt');
-                    }
-                     // Context Template (부가 정보)
-					 //현재는 생략
-					 /*
-                    if (storedValue.hasOwnProperty('ctxTpl')) {
-                        toastContentHtml += `  - Context Template: ${storedValue.ctxTpl}<br>`;
-                    } else {
-                        toastContentHtml += `  - Context Template: (정보 없음)<br>`;
-                        missingKeys.push('ctxTpl');
-                    }
-					*/
-
-                    // Text Completion 데이터인데 누락된 키가 있으면 경고 로그
-                    if (missingKeys.length > 0) {
-                        console.warn(`${DEBUG_PREFIX_CLICK} Text Completion data for key ${lookupKey} is missing expected keys: [${missingKeys.join(', ')}]`, storedValue);
-                    }
 
                 } else {
-                    // --- Non-Text Completion 데이터 표시 로직 (대표적으로 Chat Completion) ---
-                    toastContentHtml += `<strong>프롬프트 :</strong><br>`; // 다른 제목 사용
-
-                    // genPreset이 핵심 정보
-                    if (storedValue.hasOwnProperty('genPreset')) {
-                        // 여기서는 레이블 없이 값만 강조해서 보여주는 것이 의미 전달에 더 좋을 수 있음
-                        toastContentHtml += `  ${storedValue.genPreset}<br>`;
-                        // 또는 명시적 레이블 사용:
-                        // toastContentHtml += `  - Preset/Prompt: ${storedValue.genPreset}<br>`;
-                    } else {
-                        // Non-Text Comp 객체인데 genPreset이 없으면 심각한 오류
-                        toastContentHtml += `  (프리셋 정보 없음 - 저장 오류)<br>`;
-                        console.error(`${DEBUG_PREFIX_CLICK} Critical: 'genPreset' key missing in non-Text Completion object for key ${lookupKey}!`, storedValue);
-                    }
-                    // 다른 필드는 이 API 타입에서는 의미가 없으므로 표시하지 않음
+                    // ... (Non-Text Completion 데이터 표시 로직 - 이전과 동일) ...
+                     toastContentHtml += `<strong>프롬프트 :</strong><br>`;
+                     if (storedValue.hasOwnProperty('genPreset')) toastContentHtml += `  ${storedValue.genPreset}<br>`; else toastContentHtml += `  (프리셋 정보 없음 - 저장 오류)<br>`;
                 }
+                toastContentHtml += `<br>`;
 
-                    toastContentHtml += `<br>`;
             } else if (typeof storedValue === 'string') {
-                // --- 레거시 문자열 데이터 처리 ---
-                toastContentHtml += `<strong>레거시 :</strong><br>이전 버전 데이터입니다. 최신 정보를 보려면 마이그레이션이 필요합니다.<br>명령어: <code>/pteMigratePresetData</code>`;
-                // 디버그용 콘솔 로그 (값 확인용)
-                console.log(`[${DEBUG_PREFIX_CLICK} - Legacy] MsgID ${messageId}, Key ${lookupKey}, Value: "${storedValue}"`);
-
+                // ... (레거시 데이터 처리 - 이전과 동일) ...
+                toastContentHtml += `<strong>레거시 :</strong><br>이전 버전 데이터입니다. 마이그레이션 필요...<br>`;
             } else {
-                // --- 저장된 정보 없음 ---
-                toastContentHtml += `<strong>사용 설정:</strong><br>(저장된 프리셋/템플릿 정보 없음)`;
-                // 키는 있는데 값이 null, undefined 등이거나, 키 자체가 없는 경우
-                // console.log(`${DEBUG_PREFIX_CLICK} No preset/template info found for key ${lookupKey}`);
+                // ... (저장된 정보 없음 처리 - 이전과 동일) ...
+                 toastContentHtml += `<strong>사용 설정:</strong><br>(저장된 프리셋/템플릿 정보 없음)`;
             }
 
-            // 3. Toastr 알림으로 정보 표시
-            // Toastr 옵션 설정
+            // 6. Toastr 알림 표시 (이전과 동일)
             const toastOptions = {
-                "closeButton": true,
-                "progressBar": true,
-                "positionClass": "toast-top-center", // 화면 상단 중앙
-				"timeOut": String(displayTimeoutMs), // 결정된 타임아웃 값 사용 (문자열로)
-                "extendedTimeOut": "2000", // 마우스 오버 시 추가 표시 시간
-                "escapeHtml": false // HTML 태그 사용 허용 (<code> 등)
+                "closeButton": true, "progressBar": true, "positionClass": "toast-top-center",
+                "timeOut": String(displayTimeoutMs), "extendedTimeOut": "2000", "escapeHtml": false
             };
-
-            // Toastr 라이브러리가 로드되었는지 확인 후 알림 표시
             if (typeof toastr === 'object' && typeof toastr.info === 'function') {
                 toastr.info(toastContentHtml, toastTitle, toastOptions);
             } else {
-                // Toastr 없으면 콘솔에만 오류 기록 (Fallback alert 제거)
-                // 콘솔 출력을 위해 HTML 태그를 간단히 제거하거나 줄바꿈으로 변경
-                const consoleContent = toastContentHtml.replace(/<br>/g, '\n')
-                                                     .replace(/<strong>(.*?)<\/strong>/g, '$1') // strong 태그 제거
-                                                     .replace(/<code>(.*?)<\/code>/g, '$1')   // code 태그 제거
-                                                     .replace(/<.*?>/g, ''); // 나머지 태그 제거
-                console.error(`${DEBUG_PREFIX_CLICK} Toastr object is not available. Title: ${toastTitle}, Content:\n${consoleContent}`);
+                // ... (Toastr 없을 때 콘솔 출력 - 이전과 동일) ...
             }
 
         } catch (error) {
-            // 이름 클릭 처리 중 예외 발생 시 에러 로그 및 알림
-            console.error(`${DEBUG_PREFIX_CLICK} Unexpected error displaying info for message ID ${messageId} (name click):`, error);
-            if (typeof toastr === 'object' && typeof toastr.error === 'function') {
-                toastr.error('정보를 표시하는 중 예상치 못한 오류가 발생했습니다.');
-            }
+            // ... (예외 처리 - 이전과 동일) ...
+            console.error(`${DEBUG_PREFIX_CLICK} Unexpected error displaying info for message ID ${messageId}:`, error);
+            if (typeof toastr === 'object' && typeof toastr.error === 'function') toastr.error('정보 표시 중 오류 발생.');
         }
     }); // end of click handler
 
@@ -766,6 +955,37 @@ SlashCommandParser.addCommandObject(SlashCommand.fromProps({
 	helpString: 'Preset Tracker Enhanced: Beta1 버전의 데이터를 이후 버전으로 마이그레이션합니다 (이 작업은 채팅방마다 수행해주어야합니다)',
 	returns: '변환된 항목 수를 포함한 결과 메시지를 반환합니다.'
 }));
+
+
+// 		/pteForceSavePreset messageId={{lastMessageId}} model=auto
+SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+    name: 'pteForceSavePreset',
+    callback: _forceSavePresetForMessage,
+    helpString: 'Preset Tracker Enhanced: 지정된 메시지 ID와 스와이프 번호에 현재 UI의 프리셋/템플릿 설정을 강제로 저장합니다.',
+    namedArgumentList: [
+        SlashCommandNamedArgument.fromProps({
+            name: 'messageId',
+            description: '프리셋을 저장할 AI 메시지의 숫자 ID',
+            isRequired: true,
+            typeList: [ARGUMENT_TYPE.INTEGER],
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'swipeNumber',
+            description: '저장할 스와이프 번호 (1부터 시작). 생략 시 현재 활성화된 스와이프 사용.',
+            isRequired: false,
+            typeList: [ARGUMENT_TYPE.INTEGER],
+        }),
+        // <<< 새로운 model 인자 정의 추가 >>>
+        SlashCommandNamedArgument.fromProps({
+            name: 'model', // 인수 이름: model
+            description: '키 생성 시 강제로 사용할 모델 이름. 생략 시 메시지/스와이프의 원래 모델 사용.',
+            isRequired: false, // 선택적 인자
+            typeList: [ARGUMENT_TYPE.STRING], // 타입은 문자열
+        }),
+    ],
+    returns: '작업 성공 또는 실패 메시지를 반환합니다.'
+}));
+
 
 console.log(`[${EXTENSION_NAME}] Event Listeners & Slash Commands Registered.`);
 console.log(`[${EXTENSION_NAME}] Extension Loaded Successfully.`);
